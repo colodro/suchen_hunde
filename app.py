@@ -120,6 +120,26 @@ def _exigir_token():
     return None
 
 
+# ---------------------------------------------------------------- utilidades de entrada
+def _json_obrigatorio():
+    dados = request.get_json(silent=True)
+    if not isinstance(dados, dict):
+        raise ErroRequisicao('Corpo da requisição deve ser um JSON (objeto)')
+    return dados
+
+
+def _foto_para_imagem(dados):
+    b64 = dados.get('foto')
+    if not isinstance(b64, str) or not b64:
+        raise ErroRequisicao('Campo "foto" (base64) é obrigatório')
+    if ',' in b64:                       # aceita o prefixo "data:image/jpeg;base64,"
+        b64 = b64.split(',', 1)[1]
+    try:
+        return Image.open(io.BytesIO(base64.b64decode(b64, validate=False)))
+    except (binascii.Error, UnidentifiedImageError, OSError, ValueError):
+        raise ErroRequisicao('Não foi possível ler a imagem em "foto"')
+
+
 # ---------------------------------------------------------------- rotas
 @app.get('/health')
 def health():
@@ -175,7 +195,6 @@ def endpoint_search():
 
     ranking = [{'id_cao': ids[i], 'similaridade': float(sim[i]), 'distancia': float(dist[i])} for i in ordem]
     
-    # Log seguro validando se a lista ranking possui itens antes de acessar o índice [0]
     primeiro_id = ranking[0]['id_cao'] if ranking else 'Nenhum'
     print(f"[LOG] Busca concluída com sucesso. Top 1 ID: {primeiro_id}", flush=True)
     
