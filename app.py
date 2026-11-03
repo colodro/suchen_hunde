@@ -120,26 +120,6 @@ def _exigir_token():
     return None
 
 
-# ---------------------------------------------------------------- utilidades de entrada
-def _json_obrigatorio():
-    dados = request.get_json(silent=True)
-    if not isinstance(dados, dict):
-        raise ErroRequisicao('Corpo da requisição deve ser um JSON (objeto)')
-    return dados
-
-
-def _foto_para_imagem(dados):
-    b64 = dados.get('foto')
-    if not isinstance(b64, str) or not b64:
-        raise ErroRequisicao('Campo "foto" (base64) é obrigatório')
-    if ',' in b64:                       # aceita o prefixo "data:image/jpeg;base64,"
-        b64 = b64.split(',', 1)[1]
-    try:
-        return Image.open(io.BytesIO(base64.b64decode(b64, validate=False)))
-    except (binascii.Error, UnidentifiedImageError, OSError, ValueError):
-        raise ErroRequisicao('Não foi possível ler a imagem em "foto"')
-
-
 # ---------------------------------------------------------------- rotas
 @app.get('/health')
 def health():
@@ -148,19 +128,14 @@ def health():
 
 @app.post('/embedding')
 def endpoint_embedding():
-    # ADICIONE ESTA LINHA:
     print("[LOG] Recebida nova requisição em /embedding", flush=True)
-    
     dados = _json_obrigatorio()
     emb = calcular_embedding(_foto_para_imagem(dados))
-    
-    # OPCIONAL: Log de sucesso
     print("[LOG] Embedding calculado com sucesso!", flush=True)
     return jsonify({'embedding': emb.tolist()})
 
 
-
-@app.post('/search')@app.post('/search')
+@app.post('/search')
 def endpoint_search():
     dados = _json_obrigatorio()
 
@@ -168,13 +143,29 @@ def endpoint_search():
     if not isinstance(candidatos, list) or not candidatos:
         raise ErroRequisicao('Campo "candidatos" (lista não vazia) é obrigatório')
     
-    # ADICIONE ESTA LINHA:
     print(f"[LOG] Iniciando busca (/search) comparando com {len(candidatos)} candidatos.", flush=True)
     
     if len(candidatos) > MAX_CANDIDATOS:
         raise ErroRequisicao(f'Máximo de {MAX_CANDIDATOS} candidatos por busca', 413)
 
-    # ... (mantenha o resto do código de validação igual) ...
+    try:
+        top_k = int(dados.get('top_k', 10))
+    except (TypeError, ValueError):
+        raise ErroRequisicao('"top_k" deve ser um inteiro')
+    top_k = max(1, min(top_k, 100))
+
+    ids, vetores = [], []
+    for i, c in enumerate(candidatos):
+        if not isinstance(c, dict) or 'id_cao' not in c or 'embedding' not in c:
+            raise ErroRequisicao(f'Candidato {i} inválido: use {{"id_cao": ..., "embedding": [...]}}')
+        try:
+            v = np.asarray(c['embedding'], dtype=np.float32)
+        except (TypeError, ValueError):
+            raise ErroRequisicao(f'Embedding do candidato {i} não é numérico')
+        if v.shape != (EMBEDDING_DIM,):
+            raise ErroRequisicao(f'Embedding do candidato {i} deve ter {EMBEDDING_DIM} valores')
+        ids.append(c['id_cao'])
+        vetores.append(v)
 
     emb_novo = calcular_embedding(_foto_para_imagem(dados))
 
@@ -184,8 +175,9 @@ def endpoint_search():
 
     ranking = [{'id_cao': ids[i], 'similaridade': float(sim[i]), 'distancia': float(dist[i])} for i in ordem]
     
-    # ADICIONE ESTA LINHA ANTES DO RETURN:
-    print(f"[LOG] Busca concluída com sucesso. Top 1 ID: {ranking[0]['id_cao'] if ranking else 'Nenhum'}", flush=True)
+    # Log seguro validando se a lista ranking possui itens antes de acessar o índice [0]
+    primeiro_id = ranking[0]['id_cao'] if ranking else 'Nenhum'
+    print(f"[LOG] Busca concluída com sucesso. Top 1 ID: {primeiro_id}", flush=True)
     
     return jsonify({'embedding_novo': emb_novo.tolist(), 'ranking': ranking})
 
